@@ -1,0 +1,210 @@
+# GOIP - IP 地址查询服务
+
+基于 MaxMind GeoIP2 数据库的 IP 地址查询服务，支持多语言、简化输出格式。
+
+## 功能特性
+
+- 支持 IPv4 地址查询
+- 两种输出格式：完整版 / 简化版
+- 多语言支持：简体中文、英语、德语、法语、日语等
+- 支持批量 IP 查询（逗号分隔）
+- 支持下载/更新 IP 数据库
+- 下载进度条显示
+
+## 使用步骤
+
+### 1. 安装 Go 环境
+
+确保已安装 Go 1.23 或更高版本：
+
+```bash
+go version
+```
+
+### 2. 下载 IP 数据库
+
+首次运行服务时，如果检测到本地没有 IP 数据库，会自动下载默认数据库：
+
+```bash
+go run main.go
+```
+
+**手动下载方式**：
+
+**方式一：下载默认数据库**
+```bash
+go run main.go -d 1
+```
+
+**方式二：下载指定 URL 的数据库**
+```bash
+go run main.go -d https://example.com/custom.mmdb
+```
+
+下载完成后会自动退出，数据库文件保存为 `Merged-IP.mmdb`。
+
+### 3. 启动服务
+
+```bash
+go run main.go
+```
+
+默认监听端口 8066，可通过 `-p` 参数指定端口：
+
+```bash
+go run main.go -p 8080
+```
+
+### 4. API 接口
+
+#### 完整版查询（默认）
+
+**路由**：`/`
+
+**参数**：
+- `ip`：要查询的 IP 地址（多个用逗号分隔）
+
+**示例**：
+```bash
+# 查询单个 IP
+curl "http://127.0.0.1:8066/?ip=8.8.8.8"
+
+# 批量查询
+curl "http://127.0.0.1:8066/?ip=8.8.8.8,1.1.1.1,114.114.114.114"
+```
+
+**响应示例**：
+```json
+[
+  {
+    "ip": "8.8.8.8",
+    "data": {
+      "city": {...},
+      "continent": {...},
+      "country": {...},
+      "location": {...},
+      "subdivisions": [...],
+      "asn": {...}
+    }
+  }
+]
+```
+
+#### 简化版查询
+
+**路由**：`/s` 或 `/s/{lang}`
+
+**参数**：
+- `ip`：要查询的 IP 地址（多个用逗号分隔）
+- `{lang}`：语言代码（可选，默认为 `zh-CN`）
+
+**支持的语言**：
+
+| 语言代码 | 说明 |
+|---------|------|
+| zh-CN | 简体中文（默认） |
+| en | 英语 |
+| de | 德语 |
+| es | 西班牙语 |
+| fr | 法语 |
+| ja | 日语 |
+| pt-BR | 巴西葡萄牙语 |
+| ru | 俄语 |
+
+**示例**：
+```bash
+# 默认简体中文
+curl "http://127.0.0.1:8066/s?ip=188.253.117.144"
+
+# 英文输出
+curl "http://127.0.0.1:8066/s/en?ip=8.8.8.8"
+
+# 日语输出
+curl "http://127.0.0.1:8066/s/ja?ip=1.1.1.1"
+
+# 繁体中文输出
+curl "http://127.0.0.1:8066/s/zh-TW?ip=114.114.114.114"
+
+# 批量查询
+curl "http://127.0.0.1:8066/s/zh-CN?ip=8.8.8.8,1.1.1.1,114.114.114.114"
+```
+
+**响应示例**：
+```json
+[
+  {
+    "organization": "Google LLC",
+    "city": "Mountain View",
+    "isp": "google.com",
+    "asn_organization": "Google LLC",
+    "latitude": 37.40599,
+    "asn": 15169,
+    "continent_code": "NA",
+    "country": "美国",
+    "timezone": "America/Los_Angeles",
+    "country_code": "US",
+    "longitude": -122.078514,
+    "region": "加利福尼亚州",
+    "ip": "8.8.8.8",
+    "region_code": "CA"
+  }
+]
+```
+
+**简化版字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| ip | IP 地址 |
+| asn | AS 号码 |
+| asn_organization | AS 组织名称 |
+| organization | 组织名称（同 asn_organization） |
+| isp | ISP 域名 |
+| continent_code | 大洲代码 |
+| country | 国家名称 |
+| country_code | 国家代码 |
+| region | 地区/省份 |
+| region_code | 地区代码 |
+| city | 城市名称 |
+| latitude | 纬度 |
+| longitude | 经度 |
+| timezone | 时区 |
+
+## 编译运行
+
+### 直接运行
+```bash
+go run main.go
+```
+
+### 编译为可执行文件
+
+**Linux/macOS**
+```bash
+go build -o goip main.go
+./goip
+```
+
+**Windows**
+```bash
+go build -o goip.exe main.go
+goip.exe
+```
+
+## 项目结构
+
+```
+.
+├── main.go          # 主程序
+├── go.mod           # Go 模块文件
+├── go.sum           # 依赖校验文件
+├── Merged-IP.mmdb   # IP 数据库文件（需下载）
+└── README.md        # 说明文档
+```
+
+## 注意事项
+
+1. 首次运行需要先下载 IP 数据库
+2. IP 数据库需要定期更新以保持数据的准确性
+3. 默认数据库来源：[NetworkCats/Merged-IP-Data](https://github.com/NetworkCats/Merged-IP-Data)
+4. 服务默认监听所有网络接口，生产环境建议使用 Nginx 反向代理并配置防火墙

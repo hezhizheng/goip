@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/oschwald/maxminddb-golang"
 )
@@ -68,26 +74,162 @@ type IPResult struct {
 	Error string    `json:"error,omitempty"`
 }
 
+type SimpleIPResult struct {
+	Organization    string  `json:"organization"`
+	City            string  `json:"city"`
+	ISP             string  `json:"isp"`
+	ASNOrganization string  `json:"asn_organization"`
+	Latitude        float64 `json:"latitude"`
+	ASN             uint32  `json:"asn"`
+	ContinentCode   string  `json:"continent_code"`
+	Country         string  `json:"country"`
+	Timezone        string  `json:"timezone"`
+	CountryCode     string  `json:"country_code"`
+	Longitude       float64 `json:"longitude"`
+	Region          string  `json:"region"`
+	IP              string  `json:"ip"`
+	RegionCode      string  `json:"region_code"`
+}
+
 var db *maxminddb.Reader
+
+var (
+	wg    = sync.WaitGroup{}
+	port  = ""
+	d     = "" // 下载标识
+	dbUrl = "https://github.com/NetworkCats/Merged-IP-Data/releases/latest/download/Merged-IP.mmdb"
+)
+
+const (
+	ipDbPath = "./Merged-IP.mmdb"
+)
+
+func init() {
+	_p := flag.String("p", "8066", "本地监听的端口")
+	_d := flag.String("d", "", "仅用于下载最新的ip地址库，保存在当前目录")
+	flag.Parse()
+
+	port = *_p
+	d = *_d
+
+	if d == "1" {
+		downloadIpDb(dbUrl)
+		os.Exit(1)
+	} else if d != "" {
+		downloadIpDb(d)
+		os.Exit(1)
+	}
+
+	checkIpDbIsExist()
+}
 
 func main() {
 	var err error
-	db, err = maxminddb.Open("Merged-IP.mmdb")
+	db, err = maxminddb.Open(ipDbPath)
 	if err != nil {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
 	defer db.Close()
 
-	http.HandleFunc("/", queryIP)
-	log.Println("服务启动，监听 http://127.0.0.1:8066")
-	log.Fatal(http.ListenAndServe(":8066", nil))
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/s") {
+			serveSimpleIP(w, r)
+		} else {
+			queryIP(w, r)
+		}
+	})
+	log.Println("服务启动，监听 http://127.0.0.1:" + port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+func serveSimpleIP(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	lang := "zh-CN"
+
+	if path != "/s" {
+		prefix := "/s/"
+		if strings.HasPrefix(path, prefix) {
+			lang = strings.TrimPrefix(path, prefix)
+			if !isValidLang(lang) {
+				lang = "zh-CN"
+			}
+		}
+	}
+
+	querySimpleIPWithLang(w, r, lang)
+}
+
+func isValidLang(lang string) bool {
+	validLangs := map[string]bool{
+		"en":    true,
+		"de":    true,
+		"es":    true,
+		"fr":    true,
+		"ja":    true,
+		"pt-BR": true,
+		"ru":    true,
+		"zh-CN": true,
+	}
+	return validLangs[lang]
+}
+
+func querySimpleIPWithLang(w http.ResponseWriter, r *http.Request, lang string) {
+	ipParam := r.URL.Query().Get("ip")
+	if ipParam == "" {
+		ipParam = "127.0.0.1"
+	}
+
+	ipList := strings.Split(ipParam, ",")
+	results := make([]SimpleIPResult, len(ipList))
+
+	var wg sync.WaitGroup
+	for i, raw := range ipList {
+		wg.Add(1)
+		go func(idx int, raw string) {
+			defer wg.Done()
+			ipStr := strings.TrimSpace(raw)
+			result := SimpleIPResult{IP: ipStr}
+
+			ip := net.ParseIP(ipStr)
+			if ip == nil {
+				return
+			}
+
+			var record IPRecord
+			if err := db.Lookup(ip, &record); err != nil {
+				return
+			}
+
+			result.ASN = record.ASN.Number
+			result.ASNOrganization = record.ASN.Organization
+			result.Organization = record.ASN.Organization
+			result.ISP = record.ASN.Domain
+			result.ContinentCode = record.Continent.Code
+			result.CountryCode = record.Country.ISOCode
+			result.Country = record.Country.Names[lang]
+			result.City = record.City.Names[lang]
+			result.Latitude = record.Location.Latitude
+			result.Longitude = record.Location.Longitude
+			result.Timezone = record.Location.TimeZone
+
+			if len(record.Subdivisions) > 0 {
+				result.RegionCode = record.Subdivisions[0].ISOCode
+				result.Region = record.Subdivisions[0].Names[lang]
+			}
+
+			results[idx] = result
+		}(i, raw)
+	}
+	wg.Wait()
+
+	writeJSON(w, http.StatusOK, results)
 }
 
 func queryIP(w http.ResponseWriter, r *http.Request) {
 	ipParam := r.URL.Query().Get("ip")
 	if ipParam == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少 ip 参数"})
-		return
+		ipParam = "127.0.0.1"
 	}
 
 	ipList := strings.Split(ipParam, ",")
@@ -128,4 +270,103 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
+}
+
+func downloadIpDb(url string) {
+	log.Println("正在下载最新的 ip 地址库...：" + url)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	wg.Add(1)
+	go func() {
+		err := downloadFile(ctx, ipDbPath, url)
+		if err != nil {
+			if ctx.Err() == context.Canceled {
+				log.Println("下载已取消")
+				os.Remove(ipDbPath)
+			} else {
+				log.Println("下载失败：", err)
+			}
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	log.Println("下载完成")
+}
+
+func downloadFile(ctx context.Context, filepath string, url string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载失败，状态码: %d", resp.StatusCode)
+	}
+
+	total := resp.ContentLength
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	var downloaded int64
+	buf := make([]byte, 32*1024)
+	progressTicker := time.NewTicker(500 * time.Millisecond)
+	defer progressTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("\n下载已中断，已下载: %s / %s\n", formatSize(downloaded), formatSize(total))
+			return ctx.Err()
+		case <-progressTicker.C:
+			if total > 0 {
+				percent := float64(downloaded) / float64(total) * 100
+				fmt.Printf("\r下载进度: %.1f%% (%s / %s)", percent, formatSize(downloaded), formatSize(total))
+			}
+		default:
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				downloaded += int64(n)
+				if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+					return writeErr
+				}
+			}
+			if err != nil {
+				if err == io.EOF {
+					if total > 0 {
+						fmt.Printf("\r下载进度: 100.0%% (%s / %s)\n", formatSize(downloaded), formatSize(total))
+					}
+					return nil
+				}
+				return err
+			}
+		}
+	}
+}
+
+func formatSize(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	} else if bytes < 1024*1024*1024 {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/1024/1024)
+	}
+	return fmt.Sprintf("%.2f GB", float64(bytes)/1024/1024/1024)
+}
+
+func checkIpDbIsExist() {
+	if _, err := os.Stat(ipDbPath); os.IsNotExist(err) {
+		log.Println("ip 地址库文件不存在")
+		downloadIpDb(dbUrl)
+	}
 }
