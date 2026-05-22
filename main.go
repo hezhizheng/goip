@@ -160,6 +160,66 @@ func serveSimpleIP(w http.ResponseWriter, r *http.Request) {
 	querySimpleIPWithLang(w, r, lang)
 }
 
+func getRealIP(r *http.Request) string {
+	// 优先级 1: X-Forwarded-For
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		ips := strings.Split(xff, ",")
+		for _, ip := range ips {
+			ip = strings.TrimSpace(ip)
+			if ip != "unknown" && net.ParseIP(ip) != nil {
+				return ip
+			}
+		}
+	}
+
+	// 优先级 2: X-Real-IP
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		if net.ParseIP(xri) != nil {
+			return xri
+		}
+	}
+
+	// 优先级 3: Forwarded
+	if forwarded := r.Header.Get("Forwarded"); forwarded != "" {
+		parts := strings.Split(forwarded, ";")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(strings.ToLower(part), "for=") {
+				forVal := strings.TrimPrefix(part[4:], "\"")
+				forVal = strings.TrimSuffix(forVal, "\"")
+				forVal = strings.TrimSpace(forVal)
+				if strings.HasPrefix(forVal, "[") {
+					// IPv6
+					if idx := strings.Index(forVal, "]"); idx != -1 {
+						forVal = forVal[1:idx]
+					}
+				} else if idx := strings.Index(forVal, ":"); idx != -1 {
+					// IPv4 + port
+					forVal = forVal[:idx]
+				}
+				if net.ParseIP(forVal) != nil {
+					return forVal
+				}
+			}
+		}
+	}
+
+	// 优先级 4: RemoteAddr (去除端口)
+	if r.RemoteAddr != "" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err == nil {
+			if net.ParseIP(host) != nil {
+				return host
+			}
+		}
+		if net.ParseIP(r.RemoteAddr) != nil {
+			return r.RemoteAddr
+		}
+	}
+
+	return "127.0.0.1"
+}
+
 func isValidLang(lang string) bool {
 	validLangs := map[string]bool{
 		"en":    true,
@@ -177,7 +237,7 @@ func isValidLang(lang string) bool {
 func querySimpleIPWithLang(w http.ResponseWriter, r *http.Request, lang string) {
 	ipParam := r.URL.Query().Get("ip")
 	if ipParam == "" {
-		ipParam = "127.0.0.1"
+		ipParam = getRealIP(r)
 	}
 
 	ipList := strings.Split(ipParam, ",")
@@ -229,7 +289,7 @@ func querySimpleIPWithLang(w http.ResponseWriter, r *http.Request, lang string) 
 func queryIP(w http.ResponseWriter, r *http.Request) {
 	ipParam := r.URL.Query().Get("ip")
 	if ipParam == "" {
-		ipParam = "127.0.0.1"
+		ipParam = getRealIP(r)
 	}
 
 	ipList := strings.Split(ipParam, ",")
