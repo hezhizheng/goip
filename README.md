@@ -10,7 +10,7 @@
 - 支持多 IP 并发查询（逗号分隔）
 - 支持下载/更新 IP 数据库
 - 下载进度条显示
-- 提供免费服务 [https://ip.hzzio.top](https://ip.hzzio.top)（请勿滥用）
+- 提供免费服务 [https://ip.hzzio.top](https://ip.hzzio.top) 、 [https://ip.hzzio.top/s](https://ip.hzzio.top/s)（请勿滥用）
 
 ## 使用步骤
 
