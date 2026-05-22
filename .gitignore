@@ -1,3 +1,4 @@
 .idea
 *.mmdb
-main.exe~
+*.exe~
+*.exe

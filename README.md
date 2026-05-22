@@ -1,58 +1,51 @@
 # GOIP - IP 地址查询服务
 
-基于 MaxMind GeoIP2 数据库的 IP 地址查询服务，支持多语言、简化输出格式。
+基于 Merged-IP-Data 数据库的 IP 地址查询服务，支持多语言、简化输出格式。
 
 ## 功能特性
-
-- 支持 IPv4 地址查询
+- 完全免费，下载即使用
+- 毫秒级响应，准确度高
 - 两种输出格式：完整版 / 简化版
 - 多语言支持：简体中文、英语、德语、法语、日语等
-- 支持批量 IP 查询（逗号分隔）
+- 支持多 IP 并发查询（逗号分隔）
 - 支持下载/更新 IP 数据库
 - 下载进度条显示
+- 提供免费服务 [https://ip.hzzio.top](https://ip.hzzio.top)（请勿滥用）
 
 ## 使用步骤
 
-### 1. 安装 Go 环境
-
-确保已安装 Go 1.23 或更高版本：
-
-```bash
-go version
-```
+### 1. [下载编译好的文件启动](13)
 
 ### 2. 下载 IP 数据库
 
 首次运行服务时，如果检测到本地没有 IP 数据库，会自动下载默认数据库：
 
 ```bash
-go run main.go
+./goip.exe
 ```
 
-**手动下载方式**：
+![](https://iili.io/CHaatDB.png)
+
+**手动下载/更新方式**：
 
 **方式一：下载默认数据库**
 ```bash
-go run main.go -d 1
+./goip.exe -d 1
 ```
 
 **方式二：下载指定 URL 的数据库**
 ```bash
-go run main.go -d https://example.com/custom.mmdb
+./goip.exe -d https://example.com/custom.mmdb
 ```
 
 下载完成后会自动退出，数据库文件保存为 `Merged-IP.mmdb`。
 
 ### 3. 启动服务
 
-```bash
-go run main.go
-```
-
 默认监听端口 8066，可通过 `-p` 参数指定端口：
 
 ```bash
-go run main.go -p 8080
+./goip.exe -p 8080
 ```
 
 ### 4. API 接口
@@ -122,9 +115,6 @@ curl "http://127.0.0.1:8066/s/en?ip=8.8.8.8"
 # 日语输出
 curl "http://127.0.0.1:8066/s/ja?ip=1.1.1.1"
 
-# 繁体中文输出
-curl "http://127.0.0.1:8066/s/zh-TW?ip=114.114.114.114"
-
 # 批量查询
 curl "http://127.0.0.1:8066/s/zh-CN?ip=8.8.8.8,1.1.1.1,114.114.114.114"
 ```
@@ -171,40 +161,18 @@ curl "http://127.0.0.1:8066/s/zh-CN?ip=8.8.8.8,1.1.1.1,114.114.114.114"
 | timezone | 时区 |
 
 ## 编译运行
-
-### 直接运行
-```bash
-go run main.go
+### 可自行编译可执行文件(跨平台)
+```
+# 用法参考 https://github.com/mitchellh/gox
+# 生成文件可直接执行 
+gox -osarch="windows/amd64" -ldflags "-s -w" -gcflags="all=-trimpath=${PWD}" -asmflags="all=-trimpath=${PWD}"
+gox -osarch="darwin/amd64" -ldflags "-s -w" -gcflags="all=-trimpath=${PWD}" -asmflags="all=-trimpath=${PWD}"
+gox -osarch="linux/amd64" -ldflags "-s -w" -gcflags="all=-trimpath=${PWD}" -asmflags="all=-trimpath=${PWD}"
+gox -osarch="linux/arm64" -ldflags "-s -w" -gcflags="all=-trimpath=${PWD}" -asmflags="all=-trimpath=${PWD}"
 ```
 
-### 编译为可执行文件
+## 许可证
+本项目采用 [MIT License](./LICENSE.txt) 开源许可证。
 
-**Linux/macOS**
-```bash
-go build -o goip main.go
-./goip
-```
-
-**Windows**
-```bash
-go build -o goip.exe main.go
-goip.exe
-```
-
-## 项目结构
-
-```
-.
-├── main.go          # 主程序
-├── go.mod           # Go 模块文件
-├── go.sum           # 依赖校验文件
-├── Merged-IP.mmdb   # IP 数据库文件（需下载）
-└── README.md        # 说明文档
-```
-
-## 注意事项
-
-1. 首次运行需要先下载 IP 数据库
-2. IP 数据库需要定期更新以保持数据的准确性
-3. 默认数据库来源：[NetworkCats/Merged-IP-Data](https://github.com/NetworkCats/Merged-IP-Data)
-4. 服务默认监听所有网络接口，生产环境建议使用 Nginx 反向代理并配置防火墙
+## 相关项目
+- [Merged-IP-Data](https://github.com/NetworkCats/Merged-IP-Data) (特别感谢)
