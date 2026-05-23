@@ -371,11 +371,25 @@ func downloadFile(ctx context.Context, filepath string, url string) error {
 	}
 
 	total := resp.ContentLength
-	out, err := os.Create(filepath)
-	if err != nil {
-		return err
+
+	_, fileExists := os.Stat(filepath)
+	useTempFile := !os.IsNotExist(fileExists)
+
+	var out *os.File
+	var tmpFile string
+
+	if useTempFile {
+		tmpFile = filepath + ".tmp"
+		out, err = os.Create(tmpFile)
+	} else {
+		out, err = os.Create(filepath)
 	}
-	defer out.Close()
+	if err != nil {
+		if useTempFile {
+			return fmt.Errorf("创建临时文件失败: %v", err)
+		}
+		return fmt.Errorf("创建文件失败: %v", err)
+	}
 
 	var downloaded int64
 	buf := make([]byte, 32*1024)
@@ -386,6 +400,10 @@ func downloadFile(ctx context.Context, filepath string, url string) error {
 		select {
 		case <-ctx.Done():
 			fmt.Printf("\n下载已中断，已下载: %s / %s\n", formatSize(downloaded), formatSize(total))
+			out.Close()
+			if useTempFile {
+				os.Remove(tmpFile)
+			}
 			return ctx.Err()
 		case <-progressTicker.C:
 			if total > 0 {
@@ -397,7 +415,11 @@ func downloadFile(ctx context.Context, filepath string, url string) error {
 			if n > 0 {
 				downloaded += int64(n)
 				if _, writeErr := out.Write(buf[:n]); writeErr != nil {
-					return writeErr
+					out.Close()
+					if useTempFile {
+						os.Remove(tmpFile)
+					}
+					return fmt.Errorf("写入文件失败: %v", writeErr)
 				}
 			}
 			if err != nil {
@@ -405,9 +427,22 @@ func downloadFile(ctx context.Context, filepath string, url string) error {
 					if total > 0 {
 						fmt.Printf("\r下载进度: 100.0%% (%s / %s)\n", formatSize(downloaded), formatSize(total))
 					}
+					out.Sync()
+					out.Close()
+
+					if useTempFile {
+						if err := os.Rename(tmpFile, filepath); err != nil {
+							os.Remove(tmpFile)
+							return fmt.Errorf("覆盖旧文件失败: %v", err)
+						}
+					}
 					return nil
 				}
-				return err
+				out.Close()
+				if useTempFile {
+					os.Remove(tmpFile)
+				}
+				return fmt.Errorf("读取数据失败: %v", err)
 			}
 		}
 	}
