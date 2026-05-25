@@ -21,7 +21,14 @@
 首次运行服务时，如果检测到本地没有 IP 数据库，会自动下载默认数据库：
 
 ```bash
+# 启动服务 并自动下载数据库(不存在的情况下)
 ./goip.exe
+```
+
+国内服务器可使用 gh-proxy.com 代理下载，速度飞快
+```bash
+# 该命令仅下载数据库 服务需额外启动 
+./goip.exe -d https://gh-proxy.com/https://github.com/NetworkCats/Merged-IP-Data/releases/latest/download/Merged-IP.mmdb
 ```
 
 ![](https://iili.io/CHaatDB.png)
@@ -39,6 +46,7 @@
 ```
 
 下载完成后会自动退出，数据库文件保存为 `Merged-IP.mmdb`。
+可结合 crontab + [shell脚本](./goip.sh) 定时自动更新数据库
 
 ### 3. 启动服务
 
