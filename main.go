@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/oschwald/maxminddb-golang"
 )
 
@@ -124,13 +125,22 @@ func init() {
 }
 
 func main() {
-	var err error
-	db, err = maxminddb.Open(ipDbPath)
+	// 加载 .env 文件配置
+	err := godotenv.Load()
 	if err != nil {
-		log.Fatalf("打开数据库失败: %v", err)
+		log.Println("ℹ️  未找到 .env 文件，将尝试读取系统环境变量")
+	} else {
+		log.Println("🌱 成功加载 .env 环境变量")
+	}
+
+	var errDb error
+	db, errDb = maxminddb.Open(ipDbPath)
+	if errDb != nil {
+		log.Fatalf("打开数据库失败: %v", errDb)
 	}
 	defer db.Close()
 
+	// 注册核心路由
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if strings.HasPrefix(path, "/s") {
@@ -139,9 +149,54 @@ func main() {
 			queryIP(w, r)
 		}
 	})
-	log.Println("服务启动，监听 http://127.0.0.1:" + port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+
+	// 读取鉴权密钥
+	secretKey := os.Getenv("GOIP_API_KEY")
+	if secretKey == "" {
+		secretKey = "goip_secret_123"
+		log.Println("⚠️  警告: 未配置 GOIP_API_KEY，已启用默认测试密钥: goip_secret_123")
+	} else {
+		log.Println("🔒 已启用 API Key 身份鉴权保护")
+	}
+
+	// 使用鉴权中间件包裹默认路由
+	authedHandler := AuthMiddleware(http.DefaultServeMux, secretKey)
+
+	log.Println("🚀 服务启动，监听 http://127.0.0.1:" + port)
+	log.Fatal(http.ListenAndServe(":"+port, authedHandler))
 }
+
+// ---------------------------------------------------------
+// 鉴权中间件
+// ---------------------------------------------------------
+func AuthMiddleware(next http.Handler, validKey string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. 优先从 Header 获取，其次从 URL 查询参数获取
+		key := r.Header.Get("X-API-Key")
+		if key == "" {
+			key = r.URL.Query().Get("key")
+		}
+
+		// 2. 校验 Token
+		if key != validKey {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"code":    401,
+				"message": "Unauthorized: Invalid or missing API Key",
+				"hint":    "Please provide '?key=YOUR_KEY' in URL or 'X-API-Key' in Header",
+			})
+			return
+		}
+
+		// 3. 校验通过，放行请求
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ---------------------------------------------------------
+// 原始业务逻辑 (查询与处理)
+// ---------------------------------------------------------
 
 func serveSimpleIP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
@@ -161,7 +216,6 @@ func serveSimpleIP(w http.ResponseWriter, r *http.Request) {
 }
 
 func getRealIP(r *http.Request) string {
-	// 优先级 1: X-Forwarded-For
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		ips := strings.Split(xff, ",")
 		for _, ip := range ips {
@@ -171,15 +225,11 @@ func getRealIP(r *http.Request) string {
 			}
 		}
 	}
-
-	// 优先级 2: X-Real-IP
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		if net.ParseIP(xri) != nil {
 			return xri
 		}
 	}
-
-	// 优先级 3: Forwarded
 	if forwarded := r.Header.Get("Forwarded"); forwarded != "" {
 		parts := strings.Split(forwarded, ";")
 		for _, part := range parts {
@@ -189,12 +239,10 @@ func getRealIP(r *http.Request) string {
 				forVal = strings.TrimSuffix(forVal, "\"")
 				forVal = strings.TrimSpace(forVal)
 				if strings.HasPrefix(forVal, "[") {
-					// IPv6
 					if idx := strings.Index(forVal, "]"); idx != -1 {
 						forVal = forVal[1:idx]
 					}
 				} else if idx := strings.Index(forVal, ":"); idx != -1 {
-					// IPv4 + port
 					forVal = forVal[:idx]
 				}
 				if net.ParseIP(forVal) != nil {
@@ -203,8 +251,6 @@ func getRealIP(r *http.Request) string {
 			}
 		}
 	}
-
-	// 优先级 4: RemoteAddr (去除端口)
 	if r.RemoteAddr != "" {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err == nil {
@@ -216,7 +262,6 @@ func getRealIP(r *http.Request) string {
 			return r.RemoteAddr
 		}
 	}
-
 	return "127.0.0.1"
 }
 
@@ -331,6 +376,10 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
 }
+
+// ---------------------------------------------------------
+// 数据库下载逻辑
+// ---------------------------------------------------------
 
 func downloadIpDb(url string) {
 	log.Println("正在下载最新的 ip 地址库...：" + url)
